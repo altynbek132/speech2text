@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import os
 import openai
 from openai import OpenAI
@@ -5,7 +6,12 @@ import argparse
 
 
 def transcribe_audio(file_path, output_file):
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("Ошибка: Переменная окружения OPENAI_API_KEY не установлена.")
+        return
+
+    client = OpenAI(api_key=api_key)
 
     if not os.path.exists(file_path):
         print(f"Файл {file_path} не найден.")
