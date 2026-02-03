@@ -49,7 +49,7 @@ def transcribe_audio(file_path):
             temp_audio.close()
 
             video.audio.write_audiofile(
-                temp_audio_path, codec="libmp3lame", verbose=False, logger=None
+                temp_audio_path, codec="libmp3lame", logger=None
             )
             video.close()
             process_path = temp_audio_path
