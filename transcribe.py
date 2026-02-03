@@ -6,7 +6,7 @@ from openai import OpenAI
 from moviepy.editor import VideoFileClip
 
 
-def transcribe_audio(file_path, output_file):
+def transcribe_audio(file_path):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("Ошибка: Переменная окружения OPENAI_API_KEY не установлена.")
@@ -68,10 +68,6 @@ def transcribe_audio(file_path, output_file):
         print(transcription.text)
         print("-" * 20)
 
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(transcription.text)
-        print(f"\nТекст успешно сохранен в {output_file}")
-
     except Exception as e:
         print(f"Произошла ошибка: {e}")
     finally:
@@ -96,14 +92,6 @@ if __name__ == "__main__":
         help="Путь к аудио или видеофайлу (по умолчанию: audio.mp3)",
     )
 
-    # Путь к выходному файлу
-    parser.add_argument(
-        "output_file",
-        nargs="?",
-        default="transcription.txt",
-        help="Путь к файлу для сохранения (по умолчанию: transcription.txt)",
-    )
-
     args = parser.parse_args()
 
-    transcribe_audio(args.file_path, args.output_file)
+    transcribe_audio(args.file_path)
