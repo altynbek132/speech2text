@@ -3,7 +3,7 @@ import os
 import argparse
 import tempfile
 from openai import OpenAI
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 
 
 def transcribe_audio(file_path):
