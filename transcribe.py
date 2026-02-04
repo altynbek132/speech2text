@@ -33,7 +33,7 @@ def transcribe_audio(file_path):
     }
 
     # Лимит OpenAI Whisper API — 25 MB
-    MAX_SIZE_BYTES = 20 * 1024 * 1024
+    MAX_SIZE_BYTES = 25 * 1024 * 1024
     temp_files = []
 
     try:
@@ -112,8 +112,6 @@ def transcribe_audio(file_path):
                             model="whisper-1", file=f
                         )
                         results.append(response.text)
-
-                    subclip.close()
 
             print("\nРезультат транскрипции:")
             print("-" * 20)
