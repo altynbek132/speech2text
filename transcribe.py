@@ -3,23 +3,34 @@ import os
 import argparse
 import tempfile
 import math
+import time
 from openai import OpenAI
 from moviepy import VideoFileClip, AudioFileClip
 
 
 def transcribe_audio(file_path):
+    print(f"--- Запуск процесса транскрипции ---")
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        print("Ошибка: Переменная окружения OPENAI_API_KEY не установлена.")
+        print("[ОШИБКА] Переменная окружения OPENAI_API_KEY не установлена.")
         return
 
+    print("[ИНФО] API-ключ найден. Инициализация клиента OpenAI...")
     client = OpenAI(api_key=api_key)
 
     if not os.path.exists(file_path):
-        print(f"Файл {file_path} не найден.")
+        print(f"[ОШИБКА] Файл не найден по пути: {file_path}")
         return
 
     file_ext = os.path.splitext(file_path)[1].lower()
+    file_size = os.path.getsize(file_path)
+    file_size_mb = file_size / (1024 * 1024)
+
+    print(f"[ИНФО] Файл: {os.path.basename(file_path)}")
+    print(f"[ИНФО] Расширение: {file_ext}")
+    print(f"[ИНФО] Размер: {file_size_mb:.2f} MB")
+
     video_extensions = {
         ".mp4",
         ".mov",
@@ -37,12 +48,14 @@ def transcribe_audio(file_path):
     temp_files = []
 
     try:
-        file_size = os.path.getsize(file_path)
         is_video = file_ext in video_extensions
 
         # Если это видео или аудио файл больше лимита — обрабатываем через moviepy
         if is_video or file_size > MAX_SIZE_BYTES:
-            print(f"Обработка файла (размер: {file_size / 1024 / 1024:.2f} MB)...")
+            if is_video:
+                print(f"[ПРОЦЕСС] Обнаружен видеоформат. Извлечение аудиодорожки...")
+            else:
+                print(f"[ПРОЦЕСС] Файл превышает лимит 25MB. Оптимизация размера...")
 
             clip = None
             if is_video:
@@ -52,12 +65,13 @@ def transcribe_audio(file_path):
                 audio_clip = AudioFileClip(file_path)
 
             if audio_clip is None:
-                print("Ошибка: В файле не найдена аудиодорожка.")
+                print("[ОШИБКА] В указанном файле не обнаружено аудиопотока.")
                 if clip:
                     clip.close()
                 return
 
             duration = audio_clip.duration
+            print(f"[ИНФО] Длительность аудио: {duration:.2f} сек.")
 
             # Временный файл для извлеченного/сжатого аудио
             temp_audio = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
@@ -65,34 +79,42 @@ def transcribe_audio(file_path):
             temp_audio.close()
             temp_files.append(temp_audio_path)
 
-            print("Конвертация в MP3...")
-            # Используем 128k битрейт для уменьшения размера без сильной потери качества
+            print(f"[ПРОЦЕСС] Конвертация в MP3 (bitrate: 128k)...")
             audio_clip.write_audiofile(
                 temp_audio_path, codec="libmp3lame", bitrate="128k", logger=None
             )
 
             processed_size = os.path.getsize(temp_audio_path)
+            processed_size_mb = processed_size / (1024 * 1024)
+            print(f"[ИНФО] Размер после сжатия: {processed_size_mb:.2f} MB")
+
             results = []
 
             if processed_size <= MAX_SIZE_BYTES:
-                print("Начинаю транскрипцию...")
+                print("[ПРОЦЕСС] Отправка файла в OpenAI Whisper API...")
+                start_time = time.time()
                 with open(temp_audio_path, "rb") as f:
                     response = client.audio.transcriptions.create(
                         model="whisper-1", file=f
                     )
                     results.append(response.text)
+                print(
+                    f"[УСПЕХ] Транскрипция завершена за {time.time() - start_time:.2f} сек."
+                )
             else:
                 # Если файл все еще больше 25MB, разбиваем на части
                 num_chunks = math.ceil(processed_size / (MAX_SIZE_BYTES * 0.95))
                 chunk_duration = duration / num_chunks
-                print(f"Файл все еще велик ({processed_size / 1024 / 1024:.2f} MB).")
-                print(f"Разбиваю на {num_chunks} частей...")
+                print(f"[ВНИМАНИЕ] Файл все еще велик ({processed_size_mb:.2f} MB).")
+                print(
+                    f"[ПРОЦЕСС] Разбивка на {num_chunks} фрагментов по ~{chunk_duration:.1f} сек..."
+                )
 
                 for i in range(num_chunks):
                     start = i * chunk_duration
                     end = min((i + 1) * chunk_duration, duration)
                     print(
-                        f"Обработка части {i+1}/{num_chunks} ({start:.0f}с - {end:.0f}с)..."
+                        f"[ЧАСТЬ {i+1}/{num_chunks}] Обработка интервала {start:.1f}с - {end:.1f}с..."
                     )
 
                     chunk_temp = tempfile.NamedTemporaryFile(
@@ -107,41 +129,56 @@ def transcribe_audio(file_path):
                         chunk_temp_path, codec="libmp3lame", bitrate="128k", logger=None
                     )
 
+                    print(f"  └─ Отправка в API...")
                     with open(chunk_temp_path, "rb") as f:
                         response = client.audio.transcriptions.create(
                             model="whisper-1", file=f
                         )
                         results.append(response.text)
 
-            print("\nРезультат транскрипции:")
-            print("-" * 20)
+                print(f"[УСПЕХ] Все части успешно обработаны.")
+
+            print("\n" + "=" * 30)
+            print("ИТОГОВЫЙ ТЕКСТ:")
+            print("-" * 30)
             print(" ".join(results))
-            print("-" * 20)
+            print("=" * 30 + "\n")
 
             audio_clip.close()
             if clip:
                 clip.close()
         else:
             # Маленький аудиофайл отправляем сразу
-            print(f"Начинаю транскрипцию файла: {file_path}...")
+            print(
+                f"[ПРОЦЕСС] Файл небольшой, отправляем напрямую в OpenAI Whisper API..."
+            )
+            start_time = time.time()
             with open(file_path, "rb") as audio_file:
                 transcription = client.audio.transcriptions.create(
                     model="whisper-1", file=audio_file
                 )
-            print("\nРезультат транскрипции:")
-            print("-" * 20)
+            print(
+                f"[УСПЕХ] Транскрипция завершена за {time.time() - start_time:.2f} сек."
+            )
+
+            print("\n" + "=" * 30)
+            print("ИТОГОВЫЙ ТЕКСТ:")
+            print("-" * 30)
             print(transcription.text)
-            print("-" * 20)
+            print("=" * 30 + "\n")
 
     except Exception as e:
-        print(f"Произошла ошибка: {e}")
+        print(f"[КРИТИЧЕСКАЯ ОШИБКА] Произошел сбой: {e}")
     finally:
-        for path in temp_files:
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except:
-                    pass
+        if temp_files:
+            print(f"[ОЧИСТКА] Удаление временных файлов ({len(temp_files)} шт.)...")
+            for path in temp_files:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception as e:
+                        print(f"[ПРЕДУПРЕЖДЕНИЕ] Не удалось удалить {path}: {e}")
+        print("--- Работа завершена ---")
 
 
 if __name__ == "__main__":
@@ -149,7 +186,6 @@ if __name__ == "__main__":
         description="Транскрипция аудио и видео с помощью OpenAI Whisper API"
     )
 
-    # Путь к файлу
     parser.add_argument(
         "file_path",
         nargs="?",
