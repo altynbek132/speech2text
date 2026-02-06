@@ -4,6 +4,7 @@ import argparse
 import tempfile
 import math
 import time
+import concurrent.futures
 from openai import OpenAI
 from moviepy import VideoFileClip, AudioFileClip
 
@@ -110,11 +111,12 @@ def transcribe_audio(file_path):
                     f"[ПРОЦЕСС] Разбивка на {num_chunks} фрагментов по ~{chunk_duration:.1f} сек..."
                 )
 
+                chunk_paths = []
                 for i in range(num_chunks):
                     start = i * chunk_duration
                     end = min((i + 1) * chunk_duration, duration)
                     print(
-                        f"[ЧАСТЬ {i+1}/{num_chunks}] Обработка интервала {start:.1f}с - {end:.1f}с..."
+                        f"[ЧАСТЬ {i+1}/{num_chunks}] Подготовка фрагмента {start:.1f}с - {end:.1f}с..."
                     )
 
                     chunk_temp = tempfile.NamedTemporaryFile(
@@ -123,20 +125,33 @@ def transcribe_audio(file_path):
                     chunk_temp_path = chunk_temp.name
                     chunk_temp.close()
                     temp_files.append(chunk_temp_path)
+                    chunk_paths.append(chunk_temp_path)
 
                     subclip = audio_clip.subclipped(start, end)
                     subclip.write_audiofile(
                         chunk_temp_path, codec="libmp3lame", bitrate="128k", logger=None
                     )
 
-                    print(f"  └─ Отправка в API...")
-                    with open(chunk_temp_path, "rb") as f:
-                        response = client.audio.transcriptions.create(
+                print(
+                    f"[ПРОЦЕСС] Отправка {len(chunk_paths)} фрагментов в API параллельно..."
+                )
+                start_parallel = time.time()
+
+                def upload_to_whisper(path):
+                    with open(path, "rb") as f:
+                        resp = client.audio.transcriptions.create(
                             model="whisper-1", file=f
                         )
-                        results.append(response.text)
+                        return resp.text
 
-                print(f"[УСПЕХ] Все части успешно обработаны.")
+                # Параллельное выполнение запросов
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    # executor.map гарантирует сохранение порядка результатов
+                    results = list(executor.map(upload_to_whisper, chunk_paths))
+
+                print(
+                    f"[УСПЕХ] Все части успешно обработаны за {time.time() - start_parallel:.2f} сек."
+                )
 
             print("\n" + "=" * 30)
             print("ИТОГОВЫЙ ТЕКСТ:")
